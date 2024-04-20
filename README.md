@@ -1,37 +1,29 @@
-# Many-To-Many Relationships : Code-Along
+# One-to-One and One-To-Many Relationships : Code-Along
 
 ## Learning Goals
 
-- Use Flask-SQLAlchemy to join tables with many-to-many relationships.
+- Use Flask-SQLAlchemy to join models with one-to-one and one-to-many
+  relationships.
 
 ---
 
 ## Introduction
 
-In the previous lesson, we saw how to create a **one-to-many** relationship by
-assigning the correct foreign key on our tables, and using the `relationship()`
-method along with the `back_populates()` parameter.
+We already know that we can build SQL tables such that they associate with one
+another via primary keys and foreign keys. We've also seen how to write SQL
+queries that join two tables to combine rows that are related based on foreign
+keys.
 
-In the SQL modules, we learned about one other kind of relationship: the
-**many-to-many**, also known as the **has many through**, relationship. For
-instance, in a domain where a cat has many owners and an owner has many cats, we
-need to create a table named **cat_owners** with foreign keys to the two related
-tables:
+In this lesson, we'll explore how Flask-SQLAlchemy makes it easy to establish
+and use relationships between models, without having to write SQL. We'll
+implement a **one-to-many** and a **one-to-one** relationship between models.
 
-![Pets Database ERD](https://curriculum-content.s3.amazonaws.com/phase-3/sql-table-relations-creating-join-tables/cats-cat_owners-owners.png)
-
-In this lesson, we'll learn different ways to implement **many-to-many**
-relationships for a data model containing employees, meetings, projects , and
-assignments:
-
-![Employee Many to Many ERD](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/employee_many_many_erd.png)
-
-- An employee **has many** meetings.
-- A meeting **has many** employees.
-- An employee **has many** projects **through** assignments.
-- A project **has many** employees **through** assignments.
-- An assignment **belongs to** an employee.
-- An assignment **belongs to** a project.
+Flask-SQLAlchemy uses a `ForeignKey` column to constrain and join data models, a
+`relationship()` method that allows one model to access its related model, and a
+`back_populates` property to establish a bi-directional relationship between
+models such that changes on one side of the relationship are propagated to the
+other side. This makes the syntax for accessing related models and creating join
+tables very simple.
 
 ---
 
@@ -56,10 +48,66 @@ $ export FLASK_APP=app.py
 $ export FLASK_RUN_PORT=5555
 ```
 
-The file `server/models.py` defines models named `Employee`, `Meeting`, and
-`Project`. Relationships have not been established between the models.
+The file `server/models.py` defines 3 models named `Employee`, `Review`, and
+`Onboarding`. Relationships have not yet been established between the models.
+You'll do that in this lesson.
 
-Run the following commands to create and seed the tables with sample data.
+```py
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import MetaData
+
+metadata = MetaData(naming_convention={
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+})
+
+db = SQLAlchemy(metadata=metadata)
+
+
+class Employee(db.Model):
+    __tablename__ = 'employees'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
+    hire_date = db.Column(db.Date)
+
+    def __repr__(self):
+        return f'<Employee {self.id}, {self.name}, {self.hire_date}>'
+
+
+class Onboarding(db.Model):
+    __tablename__ = 'onboardings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    orientation = db.Column(db.DateTime)
+    forms_complete = db.Column(db.Boolean, default=False)
+
+    def __repr__(self):
+        return f'<Onboarding {self.id}, {self.orientation}, {self.forms_complete}>'
+
+
+class Review(db.Model):
+    __tablename__ = 'reviews'
+
+    id = db.Column(db.Integer, primary_key=True)
+    year = db.Column(db.Integer)
+    summary = db.Column(db.String)
+
+    def __repr__(self):
+        return f'<Review {self.id}, {self.year}, {self.summary}>'
+```
+
+- `Employee` has a ` name` and `hire_date`.
+- An employee receives a new performance review every year. `Review` stores the
+  `year` and a performance `summary`.
+- An employee goes through an onboarding process as a new hire. `Onboarding`
+  stores the date and time of the employee's `orientation` session, along with a
+  boolean named `forms_complete` that indicates whether all required forms have
+  been filled out. While the onboarding information could be stored with the
+  `Employee` model directly, it is seldom used and thus abstracted into a
+  separate model.
+
+Run the following commands to create and seed the three tables with sample
+data.
 
 ```console
 $ flask db init
@@ -68,44 +116,205 @@ $ flask db upgrade head
 $ python seed.py
 ```
 
-## Many-To-Many with `Table` Objects
+Confirm the database `server/instance/app.db` has the three tables with the
+initial seed data using a VS Code extension such as SQLite Viewer:
 
-Many-to-many relationships in SQLAlchemy use intermediaries called **association
-tables** (also called join tables). These are tables that exist only to join two
-related tables together.
+## ![initial tables with seed data](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/init_db.png)
 
-There are two approaches to building these associations: association objects,
-which are most similar to the models we've built so far, and the more common
-approach, `Table` objects.
+## Relational Data Model
 
-![employee meetings join table](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/employee_meetings_fk.png)
+Let's update the initial data model to add two relationships.
 
-We'll implement the many-to-many between `employees` and `meetings` by creating
-a table named `employee_meetings`. Since `employee_meetings` is on the **many**
-side of its relationships with `employees` and `meetings`, the table will store
-two foreign keys `employee_id` and `meeting_id` to reference the primary keys of
-the other two tables.
+![employee one-to-many erd](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/employee_one_many.png)
 
-Update `models.py` to add the new association table `employee_meetings` as shown
-below. NOTE: You'll need to place this above the `Employee` and `Meeting` models
-within `models.py` so they may reference it.
+We will add a **one-to-many** relationship between `Employee` and `Review`. A
+**one-to-many** relationship is also referred to as a **has many/belongs to**
+relationship.
+
+- `Employee -< Review`
+- An employee **has many** reviews.
+- A review **belongs to** one employee.
+
+We will add a **one-to-one** relationship between `Employee` and `Onboarding`. A
+**one-to-one** relationship is also referred to as a **has one/belongs to**
+relationship.
+
+- `Employee -- Onboarding`
+- An employee **has one** onboarding.
+- An onboarding **belongs to** one employee.
+
+## One-To-Many Relationship
+
+We'll implement the one-to-many relationship first since it is more common than
+a one-to-one relationship.
+
+The concept of **Single Source Of Truth (SSOT)** states we should design
+applications to avoid redundancy. In terms of database design, we want to store
+a relationship between two entities in just one place. We do this to avoid
+issues that arise when redundant data is not updated in a consistent manner.
+
+For a one-to-many relationship, the model on the "many" side is responsible for
+storing the relationship. Why? Beside each object on the "many" side is related
+to just one entity on the "one" side, thus it only needs to store a single value
+to maintain the relationship.
+
+![one to many owning side of relationship](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/one_many_owning.png)
+
+While we store the relationship in just one place in the database, we often need
+to access and update both sides of the relationship within our application. We
+will establish a bidirectional relationship between two models (one-to-many and
+many-to-one) by making the following updates:
+
+1. Add a foreign key column to the model on the "many" or "belongs to" side to
+   store the one-to-many relationship.
+2. Add a relationship to the model on the "one" side to reference a list of
+   associated objects from the "many" side.
+3. Add a reciprocal relationship to the model on the "many" side and connect
+   both relationships using the `back_populates` property.
+
+Normally we will make the three changes to the data model all together in one
+step. However, this lesson performs them one at a time to clarify what each
+update does to the data model.
+
+### Update #1 : Add a foreign key column to the `Review` model to store the one-to-many relationship.
+
+An employee **has many** reviews. A review **belongs to** one employee.
+
+The initial schema did not include a foreign key reference to an employee in the
+`reviews` table. Each row contains an annual performance review for one
+employee, but the data does not tell us which employee the review is for!
+
+![initial review table without foreign key](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/init_review.png)
+
+Since `Review` is on the many or **belongs to** side, it is responsible for
+storing the relationship. Edit the `Review` model to add the attribute
+`employee_id` to store a foreign key column:
 
 ```py
-# Association table to store many-to-many relationship between employees and meetings
-employee_meetings = db.Table(
-    'employees_meetings',
-    metadata,
-    db.Column('employee_id', db.Integer, db.ForeignKey(
-        'employees.id'), primary_key=True),
-    db.Column('meeting_id', db.Integer, db.ForeignKey(
-        'meetings.id'), primary_key=True)
-)
+class Review(db.Model):
+    __tablename__ = 'reviews'
+
+    id = db.Column(db.Integer, primary_key=True)
+    year = db.Column(db.Integer)
+    summary = db.Column(db.String)
+    # Foreign key stores the Employee id
+    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'))
+
+    def __repr__(self):
+        return f'<Review {self.id}, {self.year}, {self.summary}>'
 ```
 
-Update `Employee` and `Meeting` to add the relationship between the two models.
-The `relationship()` method is passed an additional parameter `secondary`, which
-indicates the relationship is implemented **through** the `employee_meetings`
-table.
+Make sure you save `models.py` before proceeding.
+
+A new column represents a schema change, which means we need to perform a
+migration. Type the following in the console:
+
+```console
+$ flask db migrate -m "add foreign key to Review"
+```
+
+You should see a new migration script in `servers/migrations/versions`:
+
+```console
+├── migrations
+│   ├── README
+│   ├── alembic.ini
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions
+│       ├── 13265153dbc6_initial_migration.py
+│       └── 57e0d9cfbe10_add_foreign_key_to_review.py
+```
+
+Open the new migration script and confirm the `upgrade()` function alters the
+`reviews` table to add the new foreign key column.
+
+Run the migration to add the foreign key by typing the following:
+
+```console
+$ flask db upgrade head
+```
+
+After migration, the `reviews` table should be updated with a new foreign key
+column named `employee_id`. Confirm the new column exists (you may need to hit
+the refresh icon).
+
+![foreign key column added to reviews table](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/empty_review_fk.png)
+
+The table has the new column `employee_id` with null values. You can use Flask
+shell to confirm the `employee_id` attribute exists but does not contain a
+value.
+
+```console
+$ flask shell
+>>> review1 = Review.query.filter_by(id = 1).first()
+>>> review1.employee_id
+None
+>>> exit()
+$
+```
+
+Let's assign values to the `employee_id` column. Edit `seed.py` to pass an
+employee id as a third argument into each `Review` constructor call. The first
+review is for employee `1` (Uri), while the other three reviews are for employee
+`2` (Tristan). NOTE: In a subsequent step we will pass an employee reference
+rather than an integer for the id.
+
+```py
+    # 1..many relationship between Employee and Review
+    uri_2023 = Review(year=2023,
+                    summary="Great web developer!",
+                    employee_id=1)
+    tristan_2021 = Review(year=2021,
+                        summary="Good coding skills, often late to work",
+                        employee_id=2)
+    tristan_2022 = Review(year=2022,
+                        summary="Strong coding skills, takes long lunches",
+                        employee_id=2)
+    tristan_2023 = Review(year=2023,
+                        summary="Awesome coding skills, dedicated worker",
+                        employee_id=2)
+    db.session.add_all([uri_2023, tristan_2021, tristan_2022, tristan_2023])
+    db.session.commit()
+```
+
+Re-seed the database.
+
+```console
+$ python seed.py
+```
+
+Refresh the `reviews` table to confirm an employee id has been added to each
+row.
+
+![review with values in foreign key column](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/review_fk_values.png)
+
+You can also use the Flask shell to confirm the employee id.
+
+```console
+$ flask shell
+>>> review1 = Review.query.filter_by(id = 1).first()
+>>> review1.employee_id
+1
+>>> exit()
+$
+```
+
+### Update #2: Add a relationship to the `Employee` model to reference a list of `Review` objects.
+
+![one to many owning side of relationship](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/one_many_owning.png)
+
+`Employee` is on the "one" side of the relationship. Following the principle of
+SSOT, we should not store an employee's reviews in the `employees` table.
+Rather, the reviews can be computed by querying the `reviews` table for rows
+associated with the current employee instance. Luckily, we can achieve this
+without writing any SQL! SQLAlchemy's `Relationship` class defines an object
+that can store a single item or a list of items that correspond to a related
+database table. The SQLAlchemy method `relationship()` creates an instance of
+`Relationship` that can be used to access the related items.
+
+Edit `Employee` to add a new property named `reviews` assigned to a new
+relationship:
 
 ```py
 class Employee(db.Model):
@@ -115,148 +324,59 @@ class Employee(db.Model):
     name = db.Column(db.String)
     hire_date = db.Column(db.Date)
 
-    # Relationship mapping the employee to related meetings
-    meetings = db.relationship(
-        'Meeting', secondary=employee_meetings, back_populates='employees')
+    # Relationship mapping the employee to related reviews
+    reviews = db.relationship('Review')
 
     def __repr__(self):
         return f'<Employee {self.id}, {self.name}, {self.hire_date}>'
 
 
-class Meeting(db.Model):
-    __tablename__ = 'meetings'
-
-    id = db.Column(db.Integer, primary_key=True)
-    topic = db.Column(db.String)
-    scheduled_time = db.Column(db.DateTime)
-    location = db.Column(db.String)
-
-    # Relationship mapping the meeting to related employees
-    employees = db.relationship(
-        'Employee', secondary=employee_meetings, back_populates='meetings')
-
-    def __repr__(self):
-        return f'<Meeting {self.id}, {self.topic}, {self.scheduled_time}, {self.location}>'
 ```
 
-You'll need to migrate the schema with the new table:
-
-```console
-flask db migrate -m 'add employee_meetings association table'
-flask db upgrade head
-```
-
-Update `seed.py` to import the table data structure:
-
-```py
-from models import db, Employee, Meeting, Project, employee_meetings
-
-```
-
-Update `seed.py` to delete the new table along with the other tables. Since the
-table is not created from a model class, you'll need to delete it using
-`db.session.query(employee_meetings).delete()`:
-
-```py
-# Delete all rows in tables
-    db.session.query(employee_meetings).delete()
-    db.session.commit()
-    Employee.query.delete()
-    Meeting.query.delete()
-    Project.query.delete()
-```
-
-Update `seed.py` to add two meetings to an employee and to add three more
-employees to a meeting.
-
-```py
-    # Many-to-many relationship between employee and meeting
-
-    # Add meetings to an employee
-    e1.meetings.append(m1)
-    e1.meetings.append(m2)
-    # Add employees to a meeting
-    m2.employees.append(e2)
-    m2.employees.append(e3)
-    m2.employees.append(e4)
-    db.session.commit()
-```
-
-Re-seed the database:
-
-```console
-$ python seed.py
-```
-
-Let's confirm the database table has the correct rows:
-
-![employee meetings table data](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/employee_meetings_table.png)
-
-We can explore the relationship using Flask shell:
+We can now easily get a list of reviews for an employee using the `reviews`
+property. Test this out with the Flask shell:
 
 ```console
 $ flask shell
->>> meeting2 = Meeting.query.filter_by(id = 2).first()
->>> meeting2
-<Meeting 2, Github Issues Brainstorming, 2023-12-01 15:15:00, Building D, Room 430>
+>>> uri = Employee.query.filter_by(id = 1).first()
+>>> uri.reviews
+[<Review 1, 2023, Great web developer!>]
+>>> tristan = Employee.query.filter_by(id = 2).first()
+>>> tristan.reviews
+[<Review 2, 2021, Good coding skills, often late to work>, <Review 3, 2022, Strong coding skills, takes long lunches>, <Review 4, 2023, Awesome coding skills, dedicated worker>]
 >>>
->>> meeting2.employees
-[<Employee 1, Uri Lee, 2022-05-17>, <Employee 4, Taylor Jai, 2015-01-02>, <Employee 3, Sasha Hao, 2021-12-01>, <Employee 2, Tristan Tal, 2020-01-30>]
->>>
->>> employee1 = Employee.query.filter_by(id = 1).first()
->>> employee1.meetings
-[<Meeting 1, Software Engineering Weekly Update, 2023-10-31 09:30:00, Building A, Room 142>, <Meeting 2, Github Issues Brainstorming, 2023-12-01 15:15:00, Building D, Room 430>]
 ```
 
-## Many-To-Many with Association Objects
+It is important to note that the `relationship()` construct **does not** alter
+the `employees` or `reviews` tables. The one-to-many relationship is still
+stored as a foreign key in the `reviews` table. Since the schema remains the
+same, we don't need to perform a migration.
 
-An employee is assigned to work on many projects, and a project may have many
-employees assigned to it. The database needs to keep track of the employee's
-role on the project, along with the dates they start and end working on the
-project. We'll use an **association object** to capture the relationship between
-an employee and a project, along with the attributes (`role`, `start_date`,
-`end_date`) that are specific to the assignment.
+### Update #3: Add a reciprocal relationship to the `Review` model
 
-![employee assignment project erd](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/employee_assignment_project.png)
-
-An association object is really just another model, thus the many-to-many
-relationship between `Employee` and `Project` is implemented as two one-to-many
-relationships through `Assignment`:
-
-- One-to-many relationship between `Employee` and `Assignment`
-- One-to-many relationship between `Project` and `Assignment`
-
-Edit `models.py` to add a new model named `Assignment` having the columns and
-relationships as shown:
+We will to establish a bidirectional relationship (one-to-many and many-to-one)
+by adding a `relationship()` construct to the `Review` model. We will connect
+both relationships by assigning a mutual `back_populates` parameter:
 
 ```py
-# Association Model to store many-to-many relationship between employee and project
-class Assignment(db.Model):
-    __tablename__ = 'assignments'
+class Review(db.Model):
+    __tablename__ = 'reviews'
 
     id = db.Column(db.Integer, primary_key=True)
-    role = db.Column(db.String)
-    start_date = db.Column(db.DateTime)
-    end_date = db.Column(db.DateTime)
+    year = db.Column(db.Integer)
+    summary = db.Column(db.String)
 
     # Foreign key to store the employee id
     employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'))
-    # Foreign key to store the project id
-    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'))
 
-    # Relationship mapping the assignment to related employee
-    employee = db.relationship('Employee', back_populates='assignments')
-    # Relationship mapping the assignment to related project
-    project = db.relationship('Project', back_populates='assignments')
+    # Relationship mapping the review to related employee
+    employee = db.relationship('Employee', back_populates="reviews")
 
     def __repr__(self):
-        return f'<Assignment {self.id}, {self.role}, {self.start_date}, {self.end_date}, {self.employee.name}, {self.project.title}>'
+        return f'<Review {self.id}, {self.year}, {self.summary}>'
 ```
 
-The `Employee` and `Project` classes must be updated to add the relationship
-through `Assignment`. We don't use the `secondary` parameter since the
-relationship is implemented directly with the `Assignment` model rather than an
-association table.
+Edit `Employee` to add the `back_populates` parameter as well:
 
 ```py
 class Employee(db.Model):
@@ -266,126 +386,91 @@ class Employee(db.Model):
     name = db.Column(db.String)
     hire_date = db.Column(db.Date)
 
-    # Relationship mapping the employee to related meetings
-    meetings = db.relationship(
-        'Meeting', secondary=employee_meetings, back_populates='employees')
-
-    # Relationship mapping the employee to related assignments
-    assignments = db.relationship(
-        'Assignment', back_populates='employee', cascade='all, delete-orphan')
+    # Relationship mapping the employee to related reviews
+    reviews = db.relationship('Review', back_populates="employee")
 
     def __repr__(self):
         return f'<Employee {self.id}, {self.name}, {self.hire_date}>'
-
-class Project(db.Model):
-    __tablename__ = 'projects'
-
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String)
-    budget = db.Column(db.Integer)
-
-    # Relationship mapping the project to related assignments
-    assignments = db.relationship('Assignment', back_populates='project',cascade='all, delete-orphan')
-
-    def __repr__(self):
-        return f'<Review {self.id}, {self.title}, {self.budget}>'
-
 ```
 
-Migrate the schema to reflect the new model:
+Some things to note:
+
+- `Employee` uses the plural name `reviews` since the relationship stores a list
+  of associated reviews.
+- `Review` used the singular name `employee` since the relationship stores a
+  single associated employee.
+- The value assigned to the `back_populates` parameter for each relationship is
+  the property name assigned to the other relationship.
+
+Now we can get the reviews for an employee, as well as the employee for a
+review:
 
 ```console
-flask db migrate -m 'add assignment association table'
-flask db upgrade head
+$ flask shell
+>>> from models import db, Employee, Review
+>>> tristan = Employee.query.filter_by(id = 2).first()
+>>> #Get list of reviews for an employee
+>>> tristan.reviews
+[<Review 2, 2021, Good coding skills, often late to work>, <Review 3, 2022, Strong coding skills, takes long lunches>, <Review 4, 2023, Awesome coding skills, dedicated worker>]
+>>> tristan_2021 = Review.query.filter_by(id = 2).first()
+>>> #Get employee for a review
+>>> tristan_2021.employee
+<Employee 2, Tristan Tal, 2020-01-30>
 ```
 
-Update `seed.py` to import the new model:
+Note that we can still reference the foreign key column `employee_id` of a
+review:
 
-```py
-from models import db, Employee, Meeting, Project, Assignment, employee_meetings
+```console
+>>> #Get employee_id for a review
+>>> tristan_2021.employee_id
+2
 ```
 
-Update `seed.py` to delete the new table:
+Let's update `seed.py` to establish the relationship using the `employee`
+attribute rather than `employee_id`. Notice we pass an object reference rather
+than an integer into the constructor call, which makes the code more
+object-oriented and less SQL-ish.
 
 ```py
-# Delete all rows in tables
-db.session.query(employee_meetings).delete()
-db.session.commit()
-Employee.query.delete()
-Meeting.query.delete()
-Project.query.delete()
-Assignment.query.delete()
-
-```
-
-You'll also need to edit `seed.py` to assign employees to projects. This should
-go at the end of the file after the employees and projects have been created.
-
-```py
-# Many-to-many relationship between employee and project through assignment
-
-a1 = Assignment(role='Project manager',
-                start_date=datetime.datetime(2023, 5, 28),
-                end_date=datetime.datetime(2023, 10, 30),
-                employee=e1,
-                project=p1)
-a2 = Assignment(role='Flask programmer',
-                start_date=datetime.datetime(2023, 6, 10),
-                end_date=datetime.datetime(2023, 10, 1),
-                employee=e2,
-                project=p1)
-a3 = Assignment(role='Flask programmer',
-                start_date=datetime.datetime(2023, 11, 1),
-                end_date=datetime.datetime(2024, 2, 1),
-                employee=e2,
-                project=p2)
-
-db.session.add_all([a1, a2, a3])
+# 1..many relationship between Employee and Review
+uri_2023 = Review(year=2023,
+                summary="Great web developer!",
+                employee=uri)
+tristan_2021 = Review(year=2021,
+                    summary="Good coding skills, often late to work",
+                    employee=tristan)
+tristan_2022 = Review(year=2022,
+                    summary="Strong coding skills, takes long lunches",
+                    employee=tristan)
+tristan_2023 = Review(year=2023,
+                    summary="Awesome coding skills, dedicated worker",
+                    employee=tristan)
+db.session.add_all([uri_2023, tristan_2021, tristan_2022, tristan_2023])
 db.session.commit()
 ```
 
-Re-seed the database:
+Now you should re-seed the database:
 
 ```console
 $ python seed.py
 ```
 
-Let's check the `assignments` table to confirm the 3 new rows:
+The `reviews` table should look the same as before, with the `employee_id`
+foreign key column holding the integer id of the associated employee.
 
-![assignment table with data](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/assignment_data.png)
+![review with values in foreign key column](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/review_fk_values.png)
 
-We can use Flask shell to get assignments for an employee or a project:
+### `back_populates` versus `backref`
 
-```console
-$ flask shell
->>> employee2 = Employee.query.filter_by(id = 2).first()
->>> employee2.assignments
-[<Assignment 2, Flask programmer, 2023-06-10 00:00:00, 2023-10-01 00:00:00, Tristan Tal, XYZ Project Flask server>, <Assignment 3, Flask programmer, 2023-11-01 00:00:00, 2024-02-01 00:00:00, Tristan Tal, XYZ Project React UI>]
->>>
->>> project1 = Project.query.filter_by(id = 1).first()
->>> project1.assignments
-[<Assignment 1, Project manager, 2023-05-28 00:00:00, 2023-10-30 00:00:00, Uri Lee, XYZ Project Flask server>, <Assignment 2, Flask programmer, 2023-06-10 00:00:00, 2023-10-01 00:00:0
-```
+Sometimes you will see examples of code where only one model is defined with
+`relationship()` and the method is passed a `backref` parameter rather than
+`back_populates`.
 
-## Association Proxy
-
-What about getting a list of projects for a given employee, or a list of
-employees for a given project? Currently we would have to do this by iterating
-over the intermediary assignments. For example, to get a list of employees
-working on project #1, we need to iterate through the project's assignments to
-then get the employee associated with each assignment:
-
-```console
->>> project1 = Project.query.filter_by(id = 1).first()
->>> [assignment.employee for assignment in project1.assignments]
-[<Employee 1, Uri Lee, 2022-05-17>, <Employee 2, Tristan Tal, 2020-01-30>]
->>>
-```
-
-SQLAlchemy provides a construct called an **association proxy** (imported from
-sqlalchemy.ext.associationproxy) that lets a model effectively reach across the
-intermediary model to access the related model. Let's update `Employee` and
-`Project` to add an **association proxy** to each model.
+For example, we could remove the explicit relationship from `Review`, and modify
+the relationship in `Employee` to use a `backref` parameter(but don't do this).
+The `backref` parameter will result in a `relationship()` being added to
+`Review` automatically.
 
 ```py
 class Employee(db.Model):
@@ -395,101 +480,286 @@ class Employee(db.Model):
     name = db.Column(db.String)
     hire_date = db.Column(db.Date)
 
-    # Relationship mapping the employee to related meetings
-    meetings = db.relationship(
-        'Meeting', secondary=employee_meetings, back_populates='employees')
+    # Relationship mapping the employee to related reviews
+    reviews = db.relationship('Review', backref="employee")
 
-    # Relationship mapping the employee to related assignments
-    assignments = db.relationship(
-        'Assignment', back_populates='employee', cascade='all, delete-orphan')
+    def __repr__(self):
+        return f'<Employee {self.id}, {self.name}, {self.hire_date}>'
 
-    # Association proxy to get projects for this employee through assignments
-    projects = association_proxy('assignments', 'project',
-                                 creator=lambda project_obj: Assignment(project=project_obj))
+
+class Review(db.Model):
+    __tablename__ = 'reviews'
+
+    id = db.Column(db.Integer, primary_key=True)
+    year = db.Column(db.Integer)
+    summary = db.Column(db.String)
+
+    # Foreign key to store the employee id
+    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'))
+
+    def __repr__(self):
+        return f'<Review {self.id}, {self.year}, {self.summary}>'
+```
+
+However, `backref` is considered legacy, and using `back_populates` with
+explicit `relationship()` constructs is generally recommended.
+
+## One-to-One Relationship
+
+A one-to-one relationship is implemented in a similar manner as a one-to-many.
+
+A one-to-one relationship is also called a "has one/belongs to" relationship.
+With a one-to-one relationship, you will pick one model to be on the "belongs
+to" side of the relationship (you can pick either model). The model on the
+"belongs to" side will store the foreign key.
+
+Let's pick the `Onboarding` model to be on the **belongs to** side of the
+relationship.
+
+![one to one relationship owning side](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/one_one_belongsto.png)
+
+We'll need to make the following updates to the data model:
+
+1. Add a foreign key column to the model on the "belongs to" side to store the
+   one-to-one relationship.
+2. Add a relationship with `uselist=False` to the model on the "has one" side to
+   reference the associated object on the "belongs to" side.
+3. Add a reciprocal relationship to the model on the "belongs to" side and
+   connect both relationships using the `back_populates` property.
+
+Since `Onboarding` is on the "belongs to" side, update the model to add a
+foreign key column and a relationship:
+
+```py
+class Onboarding(db.Model):
+    __tablename__ = 'onboardings'
+
+    id = db.Column(db.Integer, primary_key=True)
+    orientation = db.Column(db.DateTime)
+    forms_complete = db.Column(db.Boolean, default=False)
+
+    # Foreign key to store the employee id
+    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'))
+
+    # Relationship mapping onboarding to related employee
+    employee = db.relationship('Employee', back_populates='onboarding')
+
+    def __repr__(self):
+        return f'<Onboarding {self.id}, {self.orientation}, {self.forms_complete}>'
+```
+
+`Employee` is on the "has one" side. You need to specify the `uselist` parameter
+in the "has one" side of a one-to-one relationship. Update the `Employee` model
+to add a relationship with the parameter `uselist=False`. This ensures the
+relationship maps to a single related object rather than a list.
+
+```py
+class Employee(db.Model):
+    __tablename__ = 'employees'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String)
+    hire_date = db.Column(db.Date)
+
+    # Relationship mapping the employee to related reviews
+    reviews = db.relationship('Review', back_populates="employee")
+
+    # Relationship mapping employee to related onboarding
+    onboarding = db.relationship(
+        'Onboarding', uselist=False, back_populates='employee')
 
     def __repr__(self):
         return f'<Employee {self.id}, {self.name}, {self.hire_date}>'
 ```
 
+Some things to note:
+
+- `Onboarding` uses the singular name `employee` since the relationship holds a
+  single `Employee` instance.
+- `Employee` uses the single name `onboarding` since the relationship holds a
+  single `Onboarding` instance.
+- The value assigned to the `back_populates` parameter for each relationship is
+  the property name assigned to the other relationship.
+
+We added a foreign key column to the `Onboarding` model, thus we need to perform
+a migration to update the database schema. Make sure you save `models.py`, then
+enter the following:
+
+```console
+$ flask db migrate -m "add foreign key to onboarding"
+$ flask db upgrade head
+```
+
+The `onboardings` table should now have a new column `employee_id`.
+
+Update `seed.py` to pass an additional argument `employee` to each `Onboarding`
+constructor call as shown:
+
 ```py
-class Project(db.Model):
-    __tablename__ = 'projects'
+# 1..1 relationship between Employee and Onboarding
 
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String)
-    budget = db.Column(db.Integer)
+uri_onboarding = Onboarding(
+    orientation=datetime.datetime(2023, 3, 27),
+    employee=uri)
 
-    # Relationship mapping the project to related assignments
-    assignments = db.relationship(
-        'Assignment', back_populates='project', cascade='all, delete-orphan')
+tristan_onboarding = Onboarding(
+    orientation=datetime.datetime(2020, 1, 20, 14, 30),
+    forms_complete=True,
+    employee=tristan)
 
-    # Association proxy to get employees for this project through assignments
-    employees = association_proxy('assignments', 'employee',
-                                  creator=lambda employee_obj: Assignment(employee=employee_obj))
+db.session.add_all([uri_onboarding, tristan_onboarding])
 
-    def __repr__(self):
-        return f'<Review {self.id}, {self.title}, {self.budget}>'
-
+db.session.commit()
 ```
 
-The first argument indicates the relationship property we intend to use as
-'connector' and the second argument indicates the name of the model we're trying
-to connect to. The `creator` parameter takes a function (an anonymous lambda
-function in this case) which accepts as argument an object of the other
-independent class and returns the corresponding object of the 'connecting' class
-that made the connection possible. For the associaion proxy inside `Employee`,
-we're saying that we want to use the `assignments` relationship to connect to
-the `Project` model. The `creator` function takes a `Project` object and returns
-an `Assignment` object.
+Confirm the `onboardings` table stores the employee's id:
 
-Now we can easily get the employees for a project:
+![onboardings table with employee foreign key](https://curriculum-content.s3.amazonaws.com/7159/python-p4-v2-flask-sqlalchemy/onboarding_fk.png)
+
+Now we can explore the one-to-one relationship using Flask shell.
 
 ```console
->>> # Use association proxy to get employees for a project
->>> project1 = Project.query.filter_by(id = 1).first()
->>> project1.employees
-[<Employee 1, Uri Lee, 2022-05-17>, <Employee 2, Tristan Tal, 2020-01-30>]
+$ flask shell
+>>> from models import db, Employee, Review, Onboarding
+>>> employee = Employee.query.filter_by(id = 1).first()
+>>> employee
+<Employee 1, Uri Lee, 2022-05-17>
+>>> # employee related to one onboarding
+>>> employee.onboarding
+<Onboarding 1, 2023-03-27 00:00:00, False>
+>>> onboarding = Onboarding.query.filter_by(id = 1).first()
+>>> # onboarding related to one employee
+>>> onboarding.employee
+<Employee 1, Uri Lee, 2022-05-17>
+>>> # onboarding stores foreign key to employee
+>>> onboarding.employee_id
+1
+>>> exit()
 ```
 
-As well as the projects for an employee:
+## Cascades
+
+In most one-to-many relationships like we see with employees and reviews, we
+want to make sure that when the parent (Employee) disappears, the child (Review)
+does as well. SQLAlchemy handles this logic with **cascades**.
+
+A cascade is a behavior of a SQLAlchemy relationship that carries from parents
+to children. _All SQLAlchemy relationships have cascades_. By default, a
+relationship's cascade behavior is set to `'save-update, merge'`. This can be
+changed to any combination of a set of behaviors:
+
+- `save-update`: when an object is placed into a session with `Session.add()`,
+  all objects associated with it should also be added to that same session.
+  - _If an employee is added to a session, all of its reviews will be as well._
+- `merge`: if the session contains duplicate objects, `merge` eliminates those
+  duplicates.
+  - _If an employee is merged to a session, its reviews that have already been
+    added to the session will not be added again._
+- `delete`: when a parent is deleted, its children are deleted as well.
+  - _If an employee is deleted, its reviews will be deleted as well._
+- `all`: a combination of `save-update`, `merge`, and `delete`.
+- `delete-orphan`: when a child is disassociated from its parent, it is deleted.
+  - _If a review is removed from `employee.reviews`, the review will be
+    deleted._
+
+As we begin configuring our cascade, let's ask ourselves a few questions:
+
+1. Do we need reviews to be updated when their employee is updated?
+2. Do we need to avoid adding duplicate reviews to our session?
+3. Do we need to delete reviews when their employee is deleted?
+4. Do we need to delete reviews when they are no longer associated with an
+   employee (i.e. orphaned)?
+
+We know that we want reviews to be associated with their employees, so that's a
+"yes" to number 1. We also want to avoid adding duplicates to the session, so
+that's a "yes" to 2 as well.
+
+Reviews are inherently linked to employees, so we should delete them if the
+employee no longer exists. That's a "yes" to number 3.
+
+Since we are going to be using `save-update`, `merge`, and `delete`, we can
+start our cascade with `all`.
+
+```py
+reviews = db.relationship('Review', back_populates="employee", cascade='all')
+```
+
+Lastly, for the same reason we included `delete`, we _do_ want to delete reviews
+that are no longer associated with an employee. What good is a review of no one?
+Let's say "yes" to number 4 as well and finish our cascade:
+
+```py
+reviews = db.relationship(
+        'Review', back_populates="employee", cascade='all, delete-orphan')
+```
+
+Our database is now configured to delete reviews when their employee is deleted
+and when they are removed from their employee, or orphaned.
+
+We can confirm this by deleting a review from an employee's list of reviews.
 
 ```console
->>> # Use association proxy to get projects for an employee
->>> employee1 = Employee.query.filter_by(id = 1).first()
->>> employee1.projects
-[<Review 1, XYZ Project Flask server, 50000>]
->>>
+>>> Review.query.all()
+[<Review 1, 2023, Great web developer!>, <Review 2, 2021, Good coding skills, often late to work>, <Review 3, 2022, Strong coding skills, takes long lunches>, <Review 4, 2023, Awesome coding skills, dedicated worker>]
+>>> uri = Employee.query.filter_by(id = 1).first()
+>>> uri.reviews
+[<Review 1, 2023, Great web developer!>]
+>>> # Remove review from list
+>>> uri.reviews.pop()
+<Review 1, 2023, Great web developer!>
+>>> # Confirm review is removed from employee's list
+>>> uri.reviews
+[]
+>>> # Confirm the review was deleted
+>>> Review.query.all()
+[<Review 2, 2021, Good coding skills, often late to work>, <Review 3, 2022, Strong coding skills, takes long lunches>, <Review 4, 2023, Awesome coding skills, dedicated worker>]
+>>> # Commit the changes in the database
+>>> db.session.add(uri)
+>>> db.session.commit()
 ```
 
-An association proxy does not modify the schema, it simply provides direct
-read/write assess between `Employee` and `Project` across the intermediary
-`Assignment.`
+We probably want a similar cascade between `Employee` and `Onboarding`. Since an
+`Onboarding` instance is only useful when associated with an existing
+`Employee`.
+
+```py
+    onboarding = db.relationship(
+        'Onboarding', uselist=False, back_populates='employee', cascade='all, delete-orphan')
+```
+
+---
 
 ## Conclusion
 
-The power of SQLAlchemy all boils down to understanding database relationships
-and making use of the correct classes and methods. By leveraging "convention
-over configuration", we're able to quickly set up complex associations between
-multiple models with just a few lines of code.
+In this lesson, we focused on the most common kind of relationship between two
+models: the **one-to-many** or **has many/belongs to** relationship.
 
-The one-to-many and many-to-many relationships are the most common when working
-with relational databases. By understanding the conventions SQLAlchemy expects
-you to follow, and how the underlying database relationships work, you have the
-ability to model all kinds of complex, real-world concepts in your code!
+We establish a bidirectional relationship between two models (one-to-many and
+many-to-one) by making the following updates:
 
-## Resources
+1. Add a foreign key column to the model on the "many" side to store the
+   one-to-many relationship.
+2. Add a relationship to the model on the "one" side to reference a list of
+   associated objects from the "many" side.
+3. Add a reciprocal relationship to the model on the "many" side and connect
+   both relationships using the `back_populates` property.
 
-- [SQLAlchemy ORM Documentation](https://docs.sqlalchemy.org/en/14/orm/)
-- [Basic Relationship Patterns - SQLAlchemy](https://docs.sqlalchemy.org/en/14/orm/basic_relationships.html)
+We also saw how to implement a **one-to-one** or **has one/belongs to**
+relationship by using the `useList=False` parameter in the relationship on the
+"has one" side of the relationship.
 
-## Solution
+With a solid understanding of how to connect tables using primary and foreign
+keys, we can take advantage of some helpful Flask-SQLAlchemy methods that make
+it much easier to build comprehensive database schemas and integrate them into
+our Flask applications.
+
+### Solution Code
 
 ```py
 # server/models.py
 
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import MetaData
-from sqlalchemy.ext.associationproxy import association_proxy
 
 metadata = MetaData(naming_convention={
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
@@ -497,16 +767,6 @@ metadata = MetaData(naming_convention={
 
 db = SQLAlchemy(metadata=metadata)
 
-# Association table to store many-to-many relationship between employees and meetings
-employee_meetings = db.Table(
-    'employee_meetings',
-    metadata,
-    db.Column('employee_id', db.Integer, db.ForeignKey(
-        'employees.id'), primary_key=True),
-    db.Column('meeting_id', db.Integer, db.ForeignKey(
-        'meetings.id'), primary_key=True)
-)
-
 
 class Employee(db.Model):
     __tablename__ = 'employees'
@@ -515,78 +775,50 @@ class Employee(db.Model):
     name = db.Column(db.String)
     hire_date = db.Column(db.Date)
 
-    # Relationship mapping the employee to related meetings
-    meetings = db.relationship(
-        'Meeting', secondary=employee_meetings, back_populates='employees')
+    # Relationship mapping the employee to related reviews
+    reviews = db.relationship(
+        'Review', back_populates="employee", cascade='all, delete-orphan')
 
-    # Relationship mapping the employee to related assignments
-    assignments = db.relationship(
-        'Assignment', back_populates='employee', cascade='all, delete-orphan')
-
-    # Association proxy to get projects for this employee through assignments
-    projects = association_proxy('assignments', 'project',
-                                 creator=lambda project_obj: Assignment(project=project_obj))
+    # Relationship mapping employee to related onboarding
+    onboarding = db.relationship(
+        'Onboarding', uselist=False, back_populates='employee', cascade='all, delete-orphan')
 
     def __repr__(self):
         return f'<Employee {self.id}, {self.name}, {self.hire_date}>'
 
 
-class Meeting(db.Model):
-    __tablename__ = 'meetings'
+class Onboarding(db.Model):
+    __tablename__ = 'onboardings'
 
     id = db.Column(db.Integer, primary_key=True)
-    topic = db.Column(db.String)
-    scheduled_time = db.Column(db.DateTime)
-    location = db.Column(db.String)
-
-    # Relationship mapping the meeting to related employees
-    employees = db.relationship(
-        'Employee', secondary=employee_meetings, back_populates='meetings')
-
-    def __repr__(self):
-        return f'<Meeting {self.id}, {self.topic}, {self.scheduled_time}, {self.location}>'
-
-
-class Project(db.Model):
-    __tablename__ = 'projects'
-
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String)
-    budget = db.Column(db.Integer)
-
-    # Relationship mapping the project to related assignments
-    assignments = db.relationship(
-        'Assignment', back_populates='project', cascade='all, delete-orphan')
-
-    # Association proxy to get employees for this project through assignments
-    employees = association_proxy('assignments', 'employee',
-                                  creator=lambda employee_obj: Assignment(employee=employee_obj))
-
-    def __repr__(self):
-        return f'<Review {self.id}, {self.title}, {self.budget}>'
-
-
-# Association Model to store many-to-many relationship with attributes between employee and project
-class Assignment(db.Model):
-    __tablename__ = 'assignments'
-
-    id = db.Column(db.Integer, primary_key=True)
-    role = db.Column(db.String)
-    start_date = db.Column(db.DateTime)
-    end_date = db.Column(db.DateTime)
+    orientation = db.Column(db.DateTime)
+    forms_complete = db.Column(db.Boolean, default=False)
 
     # Foreign key to store the employee id
     employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'))
-    # Foreign key to store the project id
-    project_id = db.Column(db.Integer, db.ForeignKey('projects.id'))
 
-    # Relationship mapping the assignment to related employee
-    employee = db.relationship('Employee', back_populates='assignments')
-    # Relationship mapping the assignment to related project
-    project = db.relationship('Project', back_populates='assignments')
+    # Relationship mapping onboarding to related employee
+    employee = db.relationship('Employee', back_populates='onboarding')
 
     def __repr__(self):
-        return f'<Assignment {self.id}, {self.role}, {self.start_date}, {self.end_date}, {self.employee.name}, {self.project.title}>'
+        return f'<Onboarding {self.id}, {self.orientation}, {self.forms_complete}>'
+
+
+class Review(db.Model):
+    __tablename__ = 'reviews'
+
+    id = db.Column(db.Integer, primary_key=True)
+    year = db.Column(db.Integer)
+    summary = db.Column(db.String)
+
+    # Foreign key to store the employee id
+    employee_id = db.Column(db.Integer, db.ForeignKey('employees.id'))
+
+    # Relationship mapping the review to related employee
+    employee = db.relationship('Employee', back_populates="reviews")
+
+    def __repr__(self):
+        return f'<Review {self.id}, {self.year}, {self.summary}>'
 ```
 
 ```py
@@ -595,73 +827,46 @@ class Assignment(db.Model):
 
 import datetime
 from app import app
-from models import db, Employee, Meeting, Project, Assignment, employee_meetings
+from models import db, Employee, Review, Onboarding
 
 with app.app_context():
 
     # Delete all rows in tables
-    db.session.query(employee_meetings).delete()
-    db.session.commit()
     Employee.query.delete()
-    Meeting.query.delete()
-    Project.query.delete()
-    Assignment.query.delete()
+    Review.query.delete()
+    Onboarding.query.delete()
 
-    # Add employees
-    e1 = Employee(name="Uri Lee", hire_date=datetime.datetime(2022, 5, 17))
-    e2 = Employee(name="Tristan Tal", hire_date=datetime.datetime(2020, 1, 30))
-    e3 = Employee(name="Sasha Hao", hire_date=datetime.datetime(2021, 12, 1))
-    e4 = Employee(name="Taylor Jai", hire_date=datetime.datetime(2015, 1, 2))
-    db.session.add_all([e1, e2, e3, e4])
+    # Add model instances to database
+    uri = Employee(name="Uri Lee", hire_date=datetime.datetime(2022, 5, 17))
+    tristan = Employee(name="Tristan Tal",
+                       hire_date=datetime.datetime(2020, 1, 30))
+    db.session.add_all([uri, tristan])
     db.session.commit()
 
-    # Add meetings
-    m1 = Meeting(topic="Software Engineering Weekly Update",
-                 scheduled_time=datetime.datetime(
-                     2023, 10, 31, 9, 30),
-                 location="Building A, Room 142")
-    m2 = Meeting(topic="Github Issues Brainstorming",
-                 scheduled_time=datetime.datetime(
-                     2023, 12, 1, 15, 15),
-                 location="Building D, Room 430")
-    db.session.add_all([m1, m2])
+    # 1..many relationship between Employee and Review
+    uri_2023 = Review(year=2023,
+                      summary="Great web developer!",
+                      employee=uri)
+    tristan_2021 = Review(year=2021,
+                          summary="Good coding skills, often late to work",
+                          employee=tristan)
+    tristan_2022 = Review(year=2022,
+                          summary="Strong coding skills, takes long lunches",
+                          employee=tristan)
+    tristan_2023 = Review(year=2023,
+                          summary="Awesome coding skills, dedicated worker",
+                          employee=tristan)
+    db.session.add_all([uri_2023, tristan_2021, tristan_2022, tristan_2023])
     db.session.commit()
 
-    # Add projects
-    p1 = Project(title="XYZ Project Flask server",  budget=50000)
-    p2 = Project(title="XYZ Project React UI", budget=100000)
-    db.session.add_all([p1, p2])
+    # 1..1 relationship between Employee and Onboarding
+    uri_onboarding = Onboarding(
+        orientation=datetime.datetime(2023, 3, 27),
+        employee=uri)
+    tristan_onboarding = Onboarding(
+        orientation=datetime.datetime(2020, 1, 20, 14, 30),
+        forms_complete=True,
+        employee=tristan)
+    db.session.add_all([uri_onboarding, tristan_onboarding])
     db.session.commit()
-
-    # Many-to-many relationship between employee and meeting
-
-    # Add meetings to an employee
-    e1.meetings.append(m1)
-    e1.meetings.append(m2)
-    # Add employees to a meeting
-    m2.employees.append(e2)
-    m2.employees.append(e3)
-    m2.employees.append(e4)
-
-    # Many-to-many relationship between employee and project through assignment
-
-    a1 = Assignment(role='Project manager',
-                    start_date=datetime.datetime(2023, 5, 28),
-                    end_date=datetime.datetime(2023, 10, 30),
-                    employee=e1,
-                    project=p1)
-    a2 = Assignment(role='Flask programmer',
-                    start_date=datetime.datetime(2023, 6, 10),
-                    end_date=datetime.datetime(2023, 10, 1),
-                    employee=e2,
-                    project=p1)
-    a3 = Assignment(role='Flask programmer',
-                    start_date=datetime.datetime(2023, 11, 1),
-                    end_date=datetime.datetime(2024, 2, 1),
-                    employee=e2,
-                    project=p2)
-
-    db.session.add_all([a1, a2, a3])
-    db.session.commit()
-
 ```
